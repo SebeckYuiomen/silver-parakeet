@@ -6,7 +6,7 @@ const { Server } = require("socket.io");
 const io = new Server(server);
 const session = require('express-session');
 const FileStore = require('session-file-store')(session);
-const fs = require('fs').promises; // Use promises version for async operations
+const fs = require('fs').promises;
 const path = require('path');
 const bcrypt = require('bcrypt');
 const sharedsession = require('express-socket.io-session');
@@ -14,8 +14,11 @@ const sharedsession = require('express-socket.io-session');
 // Path to the user data file
 const USERS_FILE = path.join(__dirname, 'users.json');
 
-// In-memory store for online users to handle potential concurrent access
-const onlineUsers = new Set(); 
+// In-memory store for online users and last message timestamps
+const onlineUsers = new Set();
+const lastMessageTimestamps = new Map();
+const MESSAGE_TIMEOUT_MS = 3000; // 3-second timeout
+const MAX_MESSAGE_LENGTH = 200;
 
 // Load user data from JSON file
 async function loadUsers() {
@@ -133,6 +136,24 @@ io.on('connection', (socket) => {
     console.log(`${username} connected`);
     
     socket.on('chat message', (msg) => {
+        const now = Date.now();
+        const lastTimestamp = lastMessageTimestamps.get(username) || 0;
+
+        // Rate limiting check
+        if (now - lastTimestamp < MESSAGE_TIMEOUT_MS) {
+            socket.emit('error', `Please wait ${MESSAGE_TIMEOUT_MS / 1000} seconds before sending another message.`);
+            return;
+        }
+
+        // Message length validation
+        if (msg.length > MAX_MESSAGE_LENGTH) {
+            socket.emit('error', 'Message exceeds 200 character limit.');
+            return;
+        }
+        
+        // Update the last message timestamp for the user
+        lastMessageTimestamps.set(username, now);
+
         io.emit('chat message', `${username}: ${msg}`);
     });
 
@@ -167,6 +188,15 @@ function getChatPage(username, authenticated) {
             #messages > li:nth-child(odd) { background: #efefef; }
             h1 { text-align: center; }
             .online-counter { text-align: center; font-size: 1.2em; padding: 10px; background: #eee; border-bottom: 1px solid #ddd; }
+            
+            /* CSS for the version text */
+            .version-info {
+                position: fixed;
+                bottom: 10px;
+                right: 10px;
+                font-size: 0.8em;
+                color: #888;
+            }
         </style>
     </head>
     <body>
@@ -175,8 +205,9 @@ function getChatPage(username, authenticated) {
         ${loginLogoutLink}
         <ul id="messages"></ul>
         <form id="form">
-            <input id="input" autocomplete="off" /><button>Send</button>
+            <input id="input" autocomplete="off" maxlength="200" /><button>Send</button>
         </form>
+        <div class="version-info">v1.2.1 beta</div>
         <script>
             const form = document.getElementById('form');
             const input = document.getElementById('input');
@@ -204,9 +235,17 @@ function getChatPage(username, authenticated) {
             socket.on('online count', (count) => {
                 userCountSpan.textContent = count;
             });
+            
+            // Listen for server-side validation errors
+            socket.on('error', (msg) => {
+                const item = document.createElement('li');
+                item.textContent = 'Error: ' + msg;
+                item.style.color = 'red';
+                messages.appendChild(item);
+                window.scrollTo(0, document.body.scrollHeight);
+            });
         </script>
     </body>
 </html>
     `;
 }
-
