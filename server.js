@@ -6,24 +6,47 @@ const { Server } = require("socket.io");
 const io = new Server(server);
 const session = require('express-session');
 const FileStore = require('session-file-store')(session);
-const fs = require('fs');
+const fs = require('fs').promises; // Use promises version for async operations
 const path = require('path');
 const bcrypt = require('bcrypt');
-const sharedsession = require('express-socket.io-session'); // Note: See the alternative approach below for a simpler implementation.
+const sharedsession = require('express-socket.io-session');
+
+// Path to the user data file
+const USERS_FILE = path.join(__dirname, 'users.json');
+
+// In-memory store for online users to handle potential concurrent access
+const onlineUsers = new Set(); 
 
 // Load user data from JSON file
-const users = JSON.parse(fs.readFileSync(path.join(__dirname, 'users.json'), 'utf8')).users;
+async function loadUsers() {
+    try {
+        const data = await fs.readFile(USERS_FILE, 'utf8');
+        return JSON.parse(data).users;
+    } catch (error) {
+        console.error("Could not load users file:", error);
+        return [];
+    }
+}
+
+// Write user data to JSON file
+async function saveUsers(users) {
+    try {
+        await fs.writeFile(USERS_FILE, JSON.stringify({ users }, null, 2), 'utf8');
+    } catch (error) {
+        console.error("Could not save users file:", error);
+    }
+}
 
 // Configure session middleware
 const sessionMiddleware = session({
-    store: new FileStore({ path: './sessions' }), // Stores session files in a 'sessions' directory
-    secret: 'your-super-secret-key', // WARNING: Use environment variables for this in production
+    store: new FileStore({ path: './sessions' }),
+    secret: 'your-super-secret-key',
     resave: false,
     saveUninitialized: false,
     cookie: {
-        secure: false, // Set to true in production over HTTPS
-        httpOnly: true, // Prevents client-side JS access to the cookie
-        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+        secure: false,
+        httpOnly: true,
+        maxAge: 7 * 24 * 60 * 60 * 1000
     }
 });
 
@@ -37,6 +60,11 @@ app.use(sessionMiddleware);
 // Share the session middleware with Socket.IO
 io.engine.use(sessionMiddleware);
 
+// Function to broadcast the online user count
+function broadcastOnlineCount() {
+    io.emit('online count', onlineUsers.size);
+}
+
 // Serve the chat page, checking for an active session
 app.get('/', (req, res) => {
     let username = req.session.username || 'Guest';
@@ -48,9 +76,15 @@ app.get('/login', (req, res) => {
     res.sendFile(path.join(__dirname, 'login.html'));
 });
 
+// Serve the signup page
+app.get('/signup', (req, res) => {
+    res.sendFile(path.join(__dirname, 'signup.html'));
+});
+
 // Handle login POST request
 app.post('/login', async (req, res) => {
     const { username, password } = req.body;
+    const users = await loadUsers();
     const user = users.find(u => u.username === username);
 
     if (user && await bcrypt.compare(password, user.password)) {
@@ -61,17 +95,40 @@ app.post('/login', async (req, res) => {
     }
 });
 
+// Handle signup POST request
+app.post('/signup', async (req, res) => {
+    const { username, password } = req.body;
+    const users = await loadUsers();
+
+    // Check if the username already exists
+    if (users.find(u => u.username === username)) {
+        return res.status(409).send('Username already exists');
+    }
+
+    // Hash the password and save the new user
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+    users.push({ username, password: hashedPassword });
+    await saveUsers(users);
+
+    // Automatically log in the new user
+    req.session.username = username;
+    res.redirect('/');
+});
+
 // Handle logout
 app.get('/logout', (req, res) => {
     req.session.destroy(() => {
-        // Redirect to the homepage after destroying the session
         res.redirect('/');
     });
 });
 
 io.on('connection', (socket) => {
-    // Get username from the session
     const username = socket.request.session.username || 'Guest';
+    
+    // Add the new user to the online set
+    onlineUsers.add(username);
+    broadcastOnlineCount();
 
     console.log(`${username} connected`);
     
@@ -81,6 +138,9 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
         console.log(`${username} disconnected`);
+        // Remove the user from the online set
+        onlineUsers.delete(username);
+        broadcastOnlineCount();
     });
 });
 
@@ -89,7 +149,7 @@ server.listen(3000, () => {
 });
 
 function getChatPage(username, authenticated) {
-    const loginLogoutLink = authenticated ? '<a href="/logout">Logout</a>' : '<a href="/login">Login</a>';
+    const loginLogoutLink = authenticated ? '<a href="/logout">Logout</a>' : '<a href="/login">Login</a> | <a href="/signup">Sign Up</a>';
     return `
 <!DOCTYPE html>
 <html>
@@ -106,10 +166,12 @@ function getChatPage(username, authenticated) {
             #messages > li { padding: 0.5rem 1rem; }
             #messages > li:nth-child(odd) { background: #efefef; }
             h1 { text-align: center; }
+            .online-counter { text-align: center; font-size: 1.2em; padding: 10px; background: #eee; border-bottom: 1px solid #ddd; }
         </style>
     </head>
     <body>
         <h1>Hello, ${username}!</h1>
+        <div class="online-counter">Online users: <span id="user-count">0</span></div>
         ${loginLogoutLink}
         <ul id="messages"></ul>
         <form id="form">
@@ -119,6 +181,7 @@ function getChatPage(username, authenticated) {
             const form = document.getElementById('form');
             const input = document.getElementById('input');
             const messages = document.getElementById('messages');
+            const userCountSpan = document.getElementById('user-count');
             
             const socket = io();
 
@@ -136,8 +199,14 @@ function getChatPage(username, authenticated) {
                 messages.appendChild(item);
                 window.scrollTo(0, document.body.scrollHeight);
             });
+
+            // Listen for the online user count update
+            socket.on('online count', (count) => {
+                userCountSpan.textContent = count;
+            });
         </script>
     </body>
 </html>
     `;
 }
+
