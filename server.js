@@ -10,15 +10,36 @@ const fs = require('fs').promises;
 const path = require('path');
 const bcrypt = require('bcrypt');
 const sharedsession = require('express-socket.io-session');
+const webpush = require('web-push'); // Add web-push
 
 // Path to the user data file
 const USERS_FILE = path.join(__dirname, 'users.json');
 
-// In-memory store for online users and last message timestamps
+// In-memory store for online users, last message timestamps, and push subscriptions
 const onlineUsers = new Set();
 const lastMessageTimestamps = new Map();
-const MESSAGE_TIMEOUT_MS = 3000; // 3-second timeout
+const userSubscriptions = new Map(); // Store user push subscriptions
+const MESSAGE_TIMEOUT_MS = 3000;
 const MAX_MESSAGE_LENGTH = 200;
+
+// VAPID keys (replace with your generated keys)
+const vapidKeys = {
+    publicKey: 'YOUR_PUBLIC_KEY',
+    privateKey: 'YOUR_PRIVATE_KEY'
+};
+webpush.setVapidDetails(
+    'mailto:youremail@example.com',
+    vapidKeys.publicKey,
+    vapidKeys.privateKey
+);
+
+// Helper function to send push notifications
+function sendPushNotification(subscription, payload) {
+    webpush.sendNotification(subscription, JSON.stringify(payload)).catch(error => {
+        console.error('Push notification failed:', error);
+        // TODO: Handle subscriptions that are no longer valid
+    });
+}
 
 // Load user data from JSON file
 async function loadUsers() {
@@ -53,15 +74,27 @@ const sessionMiddleware = session({
     }
 });
 
-// Use middleware to parse request bodies
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-
-// Set up the session middleware for Express
 app.use(sessionMiddleware);
-
-// Share the session middleware with Socket.IO
 io.engine.use(sessionMiddleware);
+
+// Expose the public VAPID key to the client
+app.get('/vapid-key', (req, res) => {
+    res.send(vapidKeys.publicKey);
+});
+
+// Handle push subscription from the client
+app.post('/subscribe', (req, res) => {
+    const username = req.session.username;
+    if (!username) {
+        return res.status(401).send('Unauthorized');
+    }
+    const subscription = req.body;
+    userSubscriptions.set(username, subscription);
+    console.log(`User ${username} subscribed for push notifications.`);
+    res.status(201).json({});
+});
 
 // Function to broadcast the online user count
 function broadcastOnlineCount() {
@@ -73,6 +106,9 @@ app.get('/', (req, res) => {
     let username = req.session.username || 'Guest';
     res.send(getChatPage(username, req.session.username !== undefined));
 });
+
+// Serve static files, including the service worker
+app.use(express.static(path.join(__dirname)));
 
 // Serve the login page
 app.get('/login', (req, res) => {
@@ -103,18 +139,15 @@ app.post('/signup', async (req, res) => {
     const { username, password } = req.body;
     const users = await loadUsers();
 
-    // Check if the username already exists
     if (users.find(u => u.username === username)) {
         return res.status(409).send('Username already exists');
     }
 
-    // Hash the password and save the new user
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
     users.push({ username, password: hashedPassword });
     await saveUsers(users);
 
-    // Automatically log in the new user
     req.session.username = username;
     res.redirect('/');
 });
@@ -129,7 +162,6 @@ app.get('/logout', (req, res) => {
 io.on('connection', (socket) => {
     const username = socket.request.session.username || 'Guest';
     
-    // Add the new user to the online set
     onlineUsers.add(username);
     broadcastOnlineCount();
 
@@ -139,27 +171,33 @@ io.on('connection', (socket) => {
         const now = Date.now();
         const lastTimestamp = lastMessageTimestamps.get(username) || 0;
 
-        // Rate limiting check
         if (now - lastTimestamp < MESSAGE_TIMEOUT_MS) {
             socket.emit('error', `Please wait ${MESSAGE_TIMEOUT_MS / 1000} seconds before sending another message.`);
             return;
         }
 
-        // Message length validation
         if (msg.length > MAX_MESSAGE_LENGTH) {
             socket.emit('error', 'Message exceeds 200 character limit.');
             return;
         }
         
-        // Update the last message timestamp for the user
         lastMessageTimestamps.set(username, now);
 
-        io.emit('chat message', `${username}: ${msg}`);
+        const fullMessage = `${username}: ${msg}`;
+        io.emit('chat message', fullMessage);
+
+        // Send push notifications to all other users
+        const onlineOtherUsers = [...onlineUsers].filter(u => u !== username);
+        onlineOtherUsers.forEach(user => {
+            if (userSubscriptions.has(user)) {
+                const subscription = userSubscriptions.get(user);
+                sendPushNotification(subscription, { body: fullMessage });
+            }
+        });
     });
 
     socket.on('disconnect', () => {
         console.log(`${username} disconnected`);
-        // Remove the user from the online set
         onlineUsers.delete(username);
         broadcastOnlineCount();
     });
@@ -207,21 +245,56 @@ function getChatPage(username, authenticated) {
         <form id="form">
             <input id="input" autocomplete="off" maxlength="200" /><button>Send</button>
         </form>
-        <div class="version-info">v1.2.2 beta</div>
+        <div class="version-info">v1.2.2.1 beta</div>
         <script>
             const form = document.getElementById('form');
             const input = document.getElementById('input');
             const messages = document.getElementById('messages');
             const userCountSpan = document.getElementById('user-count');
+            const username = '${username}';
             
             const socket = io();
             let notificationPermission = Notification.permission;
             
-            // Request notification permission on first interaction
+            // Function to handle push notification subscription
+            async function subscribeUserToPush() {
+                if ('serviceWorker' in navigator && 'PushManager' in window && notificationPermission === 'granted') {
+                    const registration = await navigator.serviceWorker.ready;
+                    const vapidKeyResponse = await fetch('/vapid-key');
+                    const vapidPublicKey = await vapidKeyResponse.text();
+
+                    const subscription = await registration.pushManager.subscribe({
+                        userVisibleOnly: true,
+                        applicationServerKey: vapidPublicKey
+                    });
+                    
+                    await fetch('/subscribe', {
+                        method: 'POST',
+                        body: JSON.stringify(subscription),
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                }
+            }
+
+            // Request notification permission and subscribe to push
             document.addEventListener('DOMContentLoaded', () => {
                 if (notificationPermission !== 'granted') {
                     Notification.requestPermission().then(permission => {
                         notificationPermission = permission;
+                        if (permission === 'granted') {
+                            subscribeUserToPush();
+                        }
+                    });
+                } else {
+                    subscribeUserToPush();
+                }
+                
+                // Register service worker
+                if ('serviceWorker' in navigator) {
+                    navigator.serviceWorker.register('/sw.js').then(reg => {
+                        console.log('Service worker registered!', reg);
                     });
                 }
             });
@@ -239,13 +312,6 @@ function getChatPage(username, authenticated) {
                 item.textContent = msg;
                 messages.appendChild(item);
                 window.scrollTo(0, document.body.scrollHeight);
-                
-                // Show notification if tab is not focused and permission is granted
-                if (document.visibilityState !== 'visible' && notificationPermission === 'granted') {
-                    new Notification('New Chat Message', {
-                        body: msg
-                    });
-                }
             });
 
             // Listen for the online user count update
