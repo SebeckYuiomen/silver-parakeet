@@ -1,12 +1,12 @@
 self.addEventListener('push', function(event) {
     let message = 'New chat message';
     if (event.data) {
-        message = event.data.text();
+        message = JSON.parse(event.data.text()).body;
     }
 
     const title = 'New Message';
     const options = {
-        body: JSON.parse(message).body
+        body: message
     };
 
     event.waitUntil(
