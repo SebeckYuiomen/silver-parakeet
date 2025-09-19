@@ -24,8 +24,8 @@ const MAX_MESSAGE_LENGTH = 200;
 
 // VAPID keys (replace with your generated keys)
 const vapidKeys = {
-    publicKey: 'YOUR_PUBLIC_KEY',
-    privateKey: 'YOUR_PRIVATE_KEY'
+    publicKey: 'BPnapha7CzialmcHU74wQn7soWvBnPDVdCEmtHSskC5XBmspIJ2SR9nRdKsR7fg3mELudJFqmpWEUiN4ZasMPhQ',
+    privateKey: 'DqD_C6rj9sIIovZkc5wLTpsctqchFULrkkMonfUh6HU'
 };
 webpush.setVapidDetails(
     'mailto:youremail@example.com',
