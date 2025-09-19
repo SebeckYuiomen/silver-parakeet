@@ -207,7 +207,7 @@ function getChatPage(username, authenticated) {
         <form id="form">
             <input id="input" autocomplete="off" maxlength="200" /><button>Send</button>
         </form>
-        <div class="version-info">v1.2.1 beta</div>
+        <div class="version-info">v1.2.2 beta</div>
         <script>
             const form = document.getElementById('form');
             const input = document.getElementById('input');
@@ -215,6 +215,16 @@ function getChatPage(username, authenticated) {
             const userCountSpan = document.getElementById('user-count');
             
             const socket = io();
+            let notificationPermission = Notification.permission;
+            
+            // Request notification permission on first interaction
+            document.addEventListener('DOMContentLoaded', () => {
+                if (notificationPermission !== 'granted') {
+                    Notification.requestPermission().then(permission => {
+                        notificationPermission = permission;
+                    });
+                }
+            });
 
             form.addEventListener('submit', (e) => {
                 e.preventDefault();
@@ -229,6 +239,13 @@ function getChatPage(username, authenticated) {
                 item.textContent = msg;
                 messages.appendChild(item);
                 window.scrollTo(0, document.body.scrollHeight);
+                
+                // Show notification if tab is not focused and permission is granted
+                if (document.visibilityState !== 'visible' && notificationPermission === 'granted') {
+                    new Notification('New Chat Message', {
+                        body: msg
+                    });
+                }
             });
 
             // Listen for the online user count update
