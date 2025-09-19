@@ -6,7 +6,7 @@ self.addEventListener('push', function(event) {
 
     const title = 'New Message';
     const options = {
-        body: message
+        body: JSON.parse(message).body
     };
 
     event.waitUntil(
