@@ -19,6 +19,10 @@
 	<div class="container">
 		<h2>Channel Subscriptions</h2>
 		<form id="channels-form">
+			<div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+				<input id="new-channel" type="text" placeholder="Add channel (e.g. my-friends-room)" maxlength="32" style="flex:1;" />
+				<button type="button" id="add-channel">Add</button>
+			</div>
 			<ul class="channels-list" id="channels-list"></ul>
 			<button type="submit">Save Preferences</button>
 		</form>
@@ -27,32 +31,36 @@
 	</div>
 	<script>
 		const socket = io();
-		let availableChannels = [];
 		let subscribedChannels = [];
 		const channelsList = document.getElementById('channels-list');
 		const statusDiv = document.getElementById('status');
+		const newChannelInput = document.getElementById('new-channel');
+		const addChannelBtn = document.getElementById('add-channel');
 
-		// Render channel checkboxes
+		// Render channel list with remove buttons
 		function renderChannels() {
 			channelsList.innerHTML = '';
-			availableChannels.forEach(channel => {
+			subscribedChannels.forEach(channel => {
 				const li = document.createElement('li');
-				const label = document.createElement('label');
-				const checkbox = document.createElement('input');
-				checkbox.type = 'checkbox';
-				checkbox.value = channel;
-				checkbox.checked = subscribedChannels.includes(channel);
-				if (channel === 'general') checkbox.disabled = true; // Always subscribed to general
-				label.appendChild(checkbox);
-				label.appendChild(document.createTextNode(' ' + channel.charAt(0).toUpperCase() + channel.slice(1)));
-				li.appendChild(label);
+				li.textContent = channel;
+				if (channel !== 'general') {
+					const removeBtn = document.createElement('button');
+					removeBtn.textContent = 'Remove';
+					removeBtn.style.marginLeft = '1rem';
+					removeBtn.onclick = () => {
+						subscribedChannels = subscribedChannels.filter(c => c !== channel);
+						renderChannels();
+					};
+					li.appendChild(removeBtn);
+				} else {
+					li.style.fontWeight = 'bold';
+				}
 				channelsList.appendChild(li);
 			});
 		}
 
 		// Receive channel info from server
 		socket.on('channel info', data => {
-			availableChannels = data.available;
 			subscribedChannels = data.subscribed;
 			renderChannels();
 		});
@@ -63,12 +71,27 @@
 			statusDiv.className = 'status error';
 		});
 
+		// Add channel button
+		addChannelBtn.onclick = () => {
+			const val = newChannelInput.value.trim();
+			if (val.length === 0 || val.length > 32 || !/^[a-zA-Z0-9_-]+$/.test(val)) {
+				statusDiv.textContent = 'Invalid channel name. Use 1-32 letters, numbers, - or _.';
+				statusDiv.className = 'status error';
+				return;
+			}
+			if (!subscribedChannels.includes(val)) {
+				subscribedChannels.push(val);
+				renderChannels();
+				statusDiv.textContent = '';
+			}
+			newChannelInput.value = '';
+		};
+
 		// On form submit, send new subscriptions
 		document.getElementById('channels-form').addEventListener('submit', e => {
 			e.preventDefault();
-			const checked = Array.from(channelsList.querySelectorAll('input[type=checkbox]:checked')).map(cb => cb.value);
-			if (!checked.includes('general')) checked.push('general'); // Always subscribe to general
-			socket.emit('subscribe channels', checked);
+			if (!subscribedChannels.includes('general')) subscribedChannels.push('general');
+			socket.emit('subscribe channels', subscribedChannels);
 			statusDiv.textContent = 'Preferences saved!';
 			statusDiv.className = 'status';
 		});

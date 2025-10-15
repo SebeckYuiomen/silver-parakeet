@@ -24,7 +24,7 @@ const userChannelSubscriptions = new Map(); // username -> Set of channels
 const MESSAGE_TIMEOUT_MS = 3000;
 const MAX_MESSAGE_LENGTH = 200;
 const DEFAULT_CHANNEL = 'general';
-const AVAILABLE_CHANNELS = ['general', 'music', 'tech', 'random'];
+// No fixed AVAILABLE_CHANNELS; users can create any channel name
 
 // VAPID keys (replace with your generated keys)
 const vapidKeys = {
@@ -84,11 +84,15 @@ async function getUserChannels(username) {
 
 // Helper to set a user's channel subscriptions (in memory and file)
 async function setUserChannels(username, channels) {
-    userChannelSubscriptions.set(username, new Set(channels));
+    // Always include 'general'
+    const cleanChannels = Array.from(new Set([DEFAULT_CHANNEL, ...channels]))
+        .map(c => c.trim())
+        .filter(c => c.length > 0 && c.length <= 32 && /^[a-zA-Z0-9_-]+$/.test(c));
+    userChannelSubscriptions.set(username, new Set(cleanChannels));
     const users = await loadUsers();
     const user = users.find(u => u.username === username);
     if (user) {
-        user.channels = channels;
+        user.channels = cleanChannels;
         await saveUsers(users);
     }
 }
@@ -200,24 +204,21 @@ io.on('connection', (socket) => {
     broadcastOnlineCount();
     console.log(`${username} connected`);
 
-    // Send available channels and user's subscriptions on connect
+
+    // Send user's subscriptions on connect
     (async () => {
         const channels = await getUserChannels(username);
-        socket.emit('channel info', { available: AVAILABLE_CHANNELS, subscribed: channels });
+        socket.emit('channel info', { subscribed: channels });
     })();
 
-    // Listen for channel subscription changes
+    // Listen for channel subscription changes (channels: array of strings)
     socket.on('subscribe channels', async (channels) => {
         if (typeof username !== 'string' || username === 'Guest') return;
-        // Validate channels
-        const validChannels = channels.filter(c => AVAILABLE_CHANNELS.includes(c));
-        if (validChannels.length === 0) {
-            socket.emit('error', 'You must subscribe to at least one channel.');
-            return;
-        }
-        await setUserChannels(username, validChannels);
-        socket.emit('channel info', { available: AVAILABLE_CHANNELS, subscribed: validChannels });
+        await setUserChannels(username, channels);
+        const updated = await getUserChannels(username);
+        socket.emit('channel info', { subscribed: updated });
     });
+
 
     // Listen for chat messages (now with channel)
     socket.on('chat message', async (data) => {
@@ -232,8 +233,9 @@ io.on('connection', (socket) => {
             socket.emit('error', 'Invalid message format.');
             return;
         }
-        if (!AVAILABLE_CHANNELS.includes(data.channel)) {
-            socket.emit('error', 'Invalid channel.');
+        // Validate channel name
+        if (data.channel.length === 0 || data.channel.length > 32 || !/^[a-zA-Z0-9_-]+$/.test(data.channel)) {
+            socket.emit('error', 'Invalid channel name.');
             return;
         }
         if (data.msg.length > MAX_MESSAGE_LENGTH) {
@@ -329,7 +331,7 @@ function getChatPage(username, authenticated) {
             <select id="channel-select" class="channel-select"></select>
             <input id="input" autocomplete="off" maxlength="200" /><button>Send</button>
         </form>
-        <div class="version-info">v1.2.2.1 beta</div>
+        <div class="version-info">v1.3.1 beta</div>
         <script>
             const form = document.getElementById('form');
             const input = document.getElementById('input');
@@ -385,16 +387,16 @@ function getChatPage(username, authenticated) {
                 }
             });
 
+
             // Listen for channel info from server
             socket.on('channel info', data => {
-                availableChannels = data.available;
                 subscribedChannels = data.subscribed;
                 // Populate channel select
                 channelSelect.innerHTML = '';
                 subscribedChannels.forEach(channel => {
                     const opt = document.createElement('option');
                     opt.value = channel;
-                    opt.textContent = channel.charAt(0).toUpperCase() + channel.slice(1);
+                    opt.textContent = channel;
                     channelSelect.appendChild(opt);
                 });
                 if (!subscribedChannels.includes(currentChannel)) {
