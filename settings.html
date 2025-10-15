@@ -1,0 +1,77 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Channel Settings</title>
+	<script src="/socket.io/socket.io.js"></script>
+	<style>
+		body { font-family: sans-serif; background: #f0f0f0; margin: 0; padding: 0; }
+		.container { max-width: 400px; margin: 40px auto; background: #fff; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); padding: 2rem; }
+		h2 { text-align: center; }
+		.channels-list { list-style: none; padding: 0; }
+		.channels-list li { margin: 0.5rem 0; }
+		button { margin-top: 1rem; width: 100%; padding: 0.75rem; background: #333; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+		.status { text-align: center; margin-top: 1rem; color: green; }
+		.error { color: red; }
+	</style>
+</head>
+<body>
+	<div class="container">
+		<h2>Channel Subscriptions</h2>
+		<form id="channels-form">
+			<ul class="channels-list" id="channels-list"></ul>
+			<button type="submit">Save Preferences</button>
+		</form>
+		<div class="status" id="status"></div>
+		<a href="/">Back to Chat</a>
+	</div>
+	<script>
+		const socket = io();
+		let availableChannels = [];
+		let subscribedChannels = [];
+		const channelsList = document.getElementById('channels-list');
+		const statusDiv = document.getElementById('status');
+
+		// Render channel checkboxes
+		function renderChannels() {
+			channelsList.innerHTML = '';
+			availableChannels.forEach(channel => {
+				const li = document.createElement('li');
+				const label = document.createElement('label');
+				const checkbox = document.createElement('input');
+				checkbox.type = 'checkbox';
+				checkbox.value = channel;
+				checkbox.checked = subscribedChannels.includes(channel);
+				if (channel === 'general') checkbox.disabled = true; // Always subscribed to general
+				label.appendChild(checkbox);
+				label.appendChild(document.createTextNode(' ' + channel.charAt(0).toUpperCase() + channel.slice(1)));
+				li.appendChild(label);
+				channelsList.appendChild(li);
+			});
+		}
+
+		// Receive channel info from server
+		socket.on('channel info', data => {
+			availableChannels = data.available;
+			subscribedChannels = data.subscribed;
+			renderChannels();
+		});
+
+		// Show errors
+		socket.on('error', msg => {
+			statusDiv.textContent = msg;
+			statusDiv.className = 'status error';
+		});
+
+		// On form submit, send new subscriptions
+		document.getElementById('channels-form').addEventListener('submit', e => {
+			e.preventDefault();
+			const checked = Array.from(channelsList.querySelectorAll('input[type=checkbox]:checked')).map(cb => cb.value);
+			if (!checked.includes('general')) checked.push('general'); // Always subscribe to general
+			socket.emit('subscribe channels', checked);
+			statusDiv.textContent = 'Preferences saved!';
+			statusDiv.className = 'status';
+		});
+	</script>
+</body>
+</html>
