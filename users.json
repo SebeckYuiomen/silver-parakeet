@@ -7,6 +7,13 @@
     {
       "username": "user2",
       "password": "$2a$10$w09u7uFj1J7R1tX5l3X2uO"
+    },
+    {
+      "username": "rizz",
+      "password": "$2b$10$Cry5MHOPiNAAjechhR5vH.TsF/rM6Ep2oxeXIdRw/DSpT2fTyavp2",
+      "channels": [
+        "general"
+      ]
     }
   ]
 }

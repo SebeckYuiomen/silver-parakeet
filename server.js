@@ -297,7 +297,7 @@ function getChatPage(username, authenticated) {
 <!DOCTYPE html>
 <html>
     <head>
-        <title>Socket.IO chat</title>
+        <title>SilverParakeet</title>
         <script src="/socket.io/socket.io.js"></script>
         <style>
             body { margin: 0; padding-bottom: 3rem; font-family: sans-serif; }
