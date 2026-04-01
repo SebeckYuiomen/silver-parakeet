@@ -100,7 +100,7 @@ async function setUserChannels(username, channels) {
 // Configure session middleware
 const sessionMiddleware = session({
     store: new FileStore({ path: './sessions' }),
-    secret: 'your-super-secret-key',
+    secret: 'all-powerful-parakeet',
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -287,8 +287,8 @@ function getSocketIdByUsername(username) {
     return null;
 }
 
-server.listen(3000, () => {
-    console.log('Listening on http://localhost:3000');
+server.listen(8080, () => {
+    console.log('Listening on http://localhost:8080');
 });
 
 function getChatPage(username, authenticated) {
