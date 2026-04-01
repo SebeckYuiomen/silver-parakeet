@@ -287,7 +287,7 @@ function getSocketIdByUsername(username) {
     return null;
 }
 
-server.listen(8080, () => {
+server.listen(80, () => {
     console.log('Listening on http://localhost:8080');
 });
 
