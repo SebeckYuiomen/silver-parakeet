@@ -288,7 +288,7 @@ function getSocketIdByUsername(username) {
 }
 
 server.listen(80, () => {
-    console.log('Listening on http://localhost:8080');
+    console.log('Listening on http://localhost:80');
 });
 
 function getChatPage(username, authenticated) {
